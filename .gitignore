@@ -1,0 +1,16 @@
+.idea
+__pycache__/
+*.py[cod]
+*.sqlite3
+*.egg*
+*.log
+/data
+/media/*
+/files/*
+.venv
+venv
+data/static/cache/*
+*/temp/*
+/sec/*.pema
+*.mo
+/data/http-cache/redirects.sqlite
