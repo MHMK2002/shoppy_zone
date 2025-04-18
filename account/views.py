@@ -1,23 +1,38 @@
 from rest_framework import status
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from account.models import User
+from account.serializers import SignUpSerializer, ProfileSerializer
 
 
 class SignUpView(APIView):
 
     def post(self, request: Request):
-        username = request.data.get('username')
-        if not username:
-            return Response(data={'username': 'you must provide this field'}, status=status.HTTP_400_BAD_REQUEST)
-        password = request.data.get('password')
-        if not password:
-            return Response(data={'password': 'you must provide this field'}, status=status.HTTP_400_BAD_REQUEST)
-        email = request.data.get('email')
-        if not email:
-            return Response(data={'email': 'you must provide this field'}, status=status.HTTP_400_BAD_REQUEST)
+        serializer = SignUpSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(data={'errors': serializer.errors})
 
-        user = User.objects.create_user(username=username, password=password, email=email)
-        return Response(data={'message': 'You are successfully signup.'}, status=status.HTTP_201_CREATED)
+        User.objects.create_user(**serializer.validated_data)
+        return Response(data=serializer.validated_data, status=status.HTTP_201_CREATED)
+
+
+class ProfileView(APIView):
+    permission_classes = [
+        IsAuthenticated
+    ]
+
+    def get(self, request: Request):
+        user = request.user
+        serializer = ProfileSerializer(instance=user)
+        return Response(data=serializer.data)
+
+    def put(self, request: Request):
+        user = request.user
+        serializer = ProfileSerializer(instance=user, data=request.data)
+        if not serializer.is_valid():
+            return Response(data={'errors': serializer.errors})
+        serializer.save()
+        return Response(data=serializer.data)
