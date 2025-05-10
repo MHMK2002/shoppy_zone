@@ -51,4 +51,3 @@ class UserAdmin(admin.ModelAdmin):
     @admin.action(description='Make user clear')
     def make_user_clear(self, request, queryset: QuerySet[User]):
         queryset.update(last_login=None, first_name='', last_name='')
-
