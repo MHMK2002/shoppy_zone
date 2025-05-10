@@ -3,3 +3,4 @@ psycopg[binary]~=3.2
 djangorestframework~=3.16
 djangorestframework-simplejwt~=5.5
 pillow~=11.2
+django-filter~=25.1
