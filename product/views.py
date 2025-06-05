@@ -1,3 +1,4 @@
+from django.db import transaction
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import status
 from rest_framework.filters import OrderingFilter, SearchFilter
@@ -8,8 +9,10 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from product.models import Category, Product
-from product.serializers import CategorySerializer, ProductSerializer
+from product.enums import CartStatusEnum
+from product.models import Category, Product, Cart, CartItem
+from product.serializers import CategorySerializer, ProductSerializer, CartSerializer, CartItemRequestBodySerializer, \
+    CartItemSerializer
 
 
 class CategoriesView(APIView):
@@ -71,3 +74,51 @@ class FavoriteProductDetailView(APIView):
             return Response({'message': 'OK'})
         else:
             return Response({'message': 'Product not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+
+class CartView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request: Request) -> Response:
+        # TODO: N+1 Query warning. Fix me later.
+        try:
+            cart = Cart.objects.get(user=request.user, status=CartStatusEnum.OPEN)
+        except Cart.DoesNotExist:
+            serializer = CartSerializer()
+            return Response(serializer.data)
+
+        total_price = 0.0
+        item_counts = 0
+
+        for item in cart.cartitem_set.all():
+            item_counts += item.quantity
+            total_price += item.quantity * item.product.price
+
+        serializer = CartSerializer({'total_price': total_price, 'item_counts': item_counts})
+
+        return Response(serializer.data)
+
+    @transaction.atomic
+    def put(self, request: Request) -> Response:
+        serializer = CartItemRequestBodySerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        cart, _ = Cart.objects.get_or_create(user=request.user, status=CartStatusEnum.OPEN)
+
+        product = serializer.validated_data['product']
+        quantity = serializer.validated_data['quantity']
+
+        try:
+            cart_item = CartItem.objects.get(cart=cart, product=product)
+            product.quantity -= quantity
+            product.quantity += cart_item.quantity
+            product.save()
+            cart_item.quantity = quantity
+            cart_item.save()
+        except CartItem.DoesNotExist:
+            cart_item = CartItem.objects.create(cart=cart, product=product, quantity=quantity)
+            product.quantity -= quantity
+            product.save()
+
+        result_serializer = CartItemSerializer(cart_item)
+        return Response(result_serializer.data)
