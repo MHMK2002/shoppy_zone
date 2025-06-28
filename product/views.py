@@ -1,18 +1,19 @@
 from django.db import transaction
+from django.db.models import F, Sum
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import status
 from rest_framework.filters import OrderingFilter, SearchFilter
-from rest_framework.generics import ListAPIView
+from rest_framework.generics import ListAPIView, get_object_or_404
 from rest_framework.pagination import PageNumberPagination
-from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated, IsAdminUser
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from product.enums import CartStatusEnum
-from product.models import Category, Product, Cart, CartItem
+from product.models import Category, Product, Cart, CartItem, Comment
 from product.serializers import CategorySerializer, ProductSerializer, CartSerializer, CartItemRequestBodySerializer, \
-    CartItemSerializer
+    CartItemSerializer, CommentSerializer, UpdateProductsSerializer, CartItemDetailSerializer
 
 
 class CategoriesView(APIView):
@@ -43,13 +44,25 @@ class ProductListView(ListAPIView):
         context['user'] = self.request.user
         return context
 
+    def get_queryset(self):
+        queryset = Product.objects.all()
+
+        if min_price := self.request.GET.get('min_price'):
+            queryset = queryset.filter(price__gte=min_price)
+
+        if max_price := self.request.GET.get('max_price'):
+            queryset = queryset.filter(price__lte=max_price)
+
+        return queryset
+
 
 class FavoriteProductListView(ProductListView):
     permission_classes = [IsAuthenticated]
 
     def get_queryset(self):
+        queryset = super().get_queryset()
         user = self.request.user
-        return Product.objects.filter(user=user)
+        return queryset.filter(user=user)
 
 
 class FavoriteProductDetailView(APIView):
@@ -87,14 +100,14 @@ class CartView(APIView):
             serializer = CartSerializer()
             return Response(serializer.data)
 
-        total_price = 0.0
-        item_counts = 0
+        queryset = cart.cartitem_set.annotate(
+            price=F('quantity') * F('product__price'),
+        ).aggregate(
+            total_price=Sum('price', default=0),
+            item_counts=Sum('quantity', default=0),
+        )
 
-        for item in cart.cartitem_set.all():
-            item_counts += item.quantity
-            total_price += item.quantity * item.product.price
-
-        serializer = CartSerializer({'total_price': total_price, 'item_counts': item_counts})
+        serializer = CartSerializer(queryset)
 
         return Response(serializer.data)
 
@@ -122,3 +135,71 @@ class CartView(APIView):
 
         result_serializer = CartItemSerializer(cart_item)
         return Response(result_serializer.data)
+
+
+class CartItemListView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request: Request, cart_id: int) -> Response:
+        cart = get_object_or_404(Cart.objects, user=request.user, id=cart_id)
+        queryset = cart.cartitem_set.annotate(
+            total_price=F('quantity') * F('product__price')
+        )
+        serializer = CartItemDetailSerializer(queryset, many=True)
+        return Response(serializer.data)
+
+
+class CommentView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request: Request, product_id: int) -> Response:
+        try:
+            product = Product.objects.get(id=product_id)
+        except Product.DoesNotExist:
+            return Response({'message': 'Product not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = CommentSerializer(data=request.data)
+
+        if not serializer.is_valid():
+            return Response({'errors': serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+
+        comment = Comment.objects.create(
+            product=product,
+            user=request.user,
+            rate=serializer.validated_data['rate'],
+            content=serializer.validated_data['content']
+        )
+
+        res_serializer = CommentSerializer(comment)
+        return Response(res_serializer.data)
+
+    def delete(self, request: Request, product_id: int) -> Response:
+        try:
+            product = Product.objects.get(id=product_id)
+        except Product.DoesNotExist:
+            return Response({'message': 'Product not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            comment = Comment.objects.get(product=product, user=request.user)
+        except Comment.DoesNotExist:
+            return Response({'message': 'Comment not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        comment.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class AdminProductView(APIView):
+    permission_classes = [IsAdminUser]
+
+    def put(self, request: Request) -> Response:
+        serializer = UpdateProductsSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(data={'errors': serializer.errors}, status=status.HTTP_400_BAD_REQUEST)
+
+        product_ids = serializer.validated_data['product_ids']
+
+        products = Product.objects.filter(id__in=product_ids)
+        products.update(quantity=0)
+
+        res_serializer = ProductSerializer(products, many=True, context={'user': request.user})
+        return Response(res_serializer.data, status=status.HTTP_200_OK)

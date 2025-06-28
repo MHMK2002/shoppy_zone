@@ -2,7 +2,7 @@ from rest_framework import serializers
 from rest_framework.exceptions import NotFound, ValidationError
 
 from account.models import User
-from product.models import Category, Product, CartItem
+from product.models import Category, Product, CartItem, Comment
 
 
 class CategorySerializer(serializers.ModelSerializer):
@@ -33,6 +33,14 @@ class CartSerializer(serializers.Serializer):
     total_price = serializers.FloatField(default=0.0)
 
 
+class CartItemDetailSerializer(serializers.ModelSerializer):
+    total_price = serializers.IntegerField()
+
+    class Meta:
+        model = CartItem
+        fields = ['total_price', 'product', 'quantity']
+
+
 class CartItemRequestBodySerializer(serializers.Serializer):
     product_id = serializers.IntegerField()
     quantity = serializers.IntegerField()
@@ -58,3 +66,25 @@ class CartItemSerializer(serializers.ModelSerializer):
     class Meta:
         model = CartItem
         fields = ['id', 'product_id', 'cart_id', 'quantity']
+
+
+class CommentSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Comment
+        fields = ['rate', 'content']
+
+
+class UpdateProductsSerializer(serializers.Serializer):
+    product_ids = serializers.ListField(
+        child=serializers.IntegerField()
+    )
+
+    def validate(self, attrs):
+        product_ids = attrs['product_ids']
+
+        count = Product.objects.filter(id__in=product_ids).count()
+
+        if count != len(product_ids):
+            raise ValidationError('Some of ids invalid.')
+
+        return attrs
